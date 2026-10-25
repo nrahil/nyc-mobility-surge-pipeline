@@ -70,14 +70,18 @@ def resolve_safe_path(target_path: str | Path, base_dir: Path = BASE_DIR) -> Pat
     the intended base directory boundary (prevents directory traversal attacks).
     """
     resolved_base = base_dir.resolve()
-    resolved_target = (resolved_base / target_path).resolve() if not Path(target_path).is_absolute() else Path(target_path).resolve()
-    
-    # Path must start with allowed base directory or be an existing system directory
-    try:
-        resolved_target.relative_to(resolved_base)
-    except ValueError:
-        # If absolute path outside project root, verify it is a valid existing path and not a relative traversal attempt
-        if not resolved_target.exists():
-            raise ValueError(f"Security Warning: Path '{target_path}' resolves outside allowed workspace: {resolved_target}")
-            
-    return resolved_target
+    target = Path(target_path)
+
+    if target.is_absolute():
+        resolved_target = target.resolve()
+        if not (resolved_target.exists() or resolved_target.parent.exists()):
+            raise ValueError(f"Security Warning: Absolute target path or parent directory does not exist: {resolved_target}")
+        return resolved_target
+    else:
+        # Relative paths must remain strictly within the base project directory
+        resolved_target = (resolved_base / target).resolve()
+        try:
+            resolved_target.relative_to(resolved_base)
+        except ValueError:
+            raise ValueError(f"Security Warning: Relative path traversal outside workspace: {target_path}")
+        return resolved_target
