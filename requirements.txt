@@ -1,0 +1,13 @@
+# Big Data Processing & Storage
+pyspark==3.5.1
+pandas>=2.0.0
+pyarrow>=14.0.0
+
+# Database & Serving Layer
+SQLAlchemy>=2.0.0
+
+# Frontend Visualization & Dashboard
+streamlit>=1.30.0
+plotly>=5.18.0
+folium>=0.15.0
+streamlit-folium>=0.18.0

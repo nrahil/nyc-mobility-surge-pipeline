@@ -1,0 +1,63 @@
+# ==========================================
+# Byte-compiled / optimized / DLL files
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ==========================================
+# Virtual Environments
+# ==========================================
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# ==========================================
+# Data Lake & Large Big Data Files
+# (Do not commit multi-gigabyte files to git)
+# ==========================================
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/lookup/*
+!data/lookup/.gitkeep
+*.parquet
+*.csv.gz
+
+# ==========================================
+# Database files
+# ==========================================
+db/*.db
+db/*.sqlite
+db/*.sqlite3
+!db/.gitkeep
+!db/schema.sql
+
+# ==========================================
+# Apache Spark & Hadoop artifacts
+# ==========================================
+metastore_db/
+spark-warehouse/
+derby.log
+*.tmp
+*.log
+
+# ==========================================
+# IDEs and Editors
+# ==========================================
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+
+# ==========================================
+# Streamlit & Web App Local Cache
+# ==========================================
+.streamlit/secrets.toml
