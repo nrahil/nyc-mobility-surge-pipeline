@@ -1,27 +1,54 @@
 """
 04_surge_pricing.py
 -------------------
-Step 3: Surge Pricing Simulation Engine
+Phase 2 - Step 3: Surge Pricing Simulation Engine
 
-Responsibilities:
-- Ingest high-resolution demand data (`zone_hourly_heatmap`)
-- Calculate dynamic baseline demand percentiles (50th, 75th, 90th) per zone
-- Apply tiered surge multiplier logic:
-    * demand > 90th percentile -> 2.5x multiplier
-    * demand > 75th percentile -> 1.8x multiplier
-    * demand > 50th percentile -> 1.3x multiplier
-    * otherwise                -> 1.0x (standard pricing)
-- Compute `simulated_fare = base_avg_fare * surge_multiplier`
-- Save results to `data/processed/surge_pricing.csv`
+Usage:
+    python scripts/04_surge_pricing.py
+    python scripts/04_surge_pricing.py --input-file data/processed/zone_hourly_heatmap.csv
 """
 
-import os
-import pandas as pd
-import numpy as np
+import sys
+import argparse
+from pathlib import Path
 
-def run_surge_simulation():
-    print("[*] Running Surge Pricing Simulation Model...")
-    pass
+# Add project root to sys.path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.config import PROCESSED_DATA_DIR, TABLE_FILES
+from src.surge import run_surge_pipeline
+
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="NYC TLC Surge Pricing Simulation Engine")
+    parser.add_argument(
+        "--input-file",
+        type=str,
+        default=str(PROCESSED_DATA_DIR / TABLE_FILES["zone_hourly_heatmap"]),
+        help="Path to zone_hourly_heatmap.csv input"
+    )
+    parser.add_argument(
+        "--output-file",
+        type=str,
+        default=str(PROCESSED_DATA_DIR / TABLE_FILES["surge_pricing"]),
+        help="Path for generated surge_pricing.csv"
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_arguments()
+    try:
+        run_surge_pipeline(
+            input_file=args.input_file,
+            output_file=args.output_file
+        )
+    except Exception as e:
+        print(f"[X] Surge Pricing simulation failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
 
 if __name__ == "__main__":
-    run_surge_simulation()
+    main()
