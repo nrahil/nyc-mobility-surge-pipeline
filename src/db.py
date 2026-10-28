@@ -80,7 +80,44 @@ def get_db_engine(db_target: Optional[str | Path] = None) -> Engine:
             conn.execute(text("PRAGMA synchronous=NORMAL;"))
             conn.commit()
 
+    # Automatically guarantee live streaming buffer table exists
+    ensure_live_trips_table(engine)
+
     return engine
+
+
+def ensure_live_trips_table(engine: Engine) -> None:
+    """
+    Ensures that the live_trips streaming table and its indexes exist in the serving layer.
+    """
+    create_table_sql = """
+    CREATE TABLE IF NOT EXISTS live_trips (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_time          TEXT NOT NULL,
+        PULocationID        INTEGER NOT NULL,
+        DOLocationID        INTEGER,
+        passenger_count     INTEGER DEFAULT 1,
+        trip_distance       REAL,
+        fare_amount         REAL,
+        tip_amount          REAL DEFAULT 0.0,
+        total_amount        REAL,
+        speed_mph           REAL,
+        duration_minutes    REAL,
+        zone_name           TEXT,
+        borough             TEXT,
+        surge_multiplier    REAL DEFAULT 1.0,
+        simulated_fare      REAL
+    );
+    """
+    index_sqls = [
+        "CREATE INDEX IF NOT EXISTS idx_live_trips_event_time ON live_trips(event_time);",
+        "CREATE INDEX IF NOT EXISTS idx_live_trips_puid ON live_trips(PULocationID);",
+        "CREATE INDEX IF NOT EXISTS idx_live_trips_borough ON live_trips(borough);",
+    ]
+    with engine.begin() as conn:
+        conn.execute(text(create_table_sql))
+        for idx in index_sqls:
+            conn.execute(text(idx))
 
 
 def init_database_schema(engine: Engine, schema_path: Path | str = SCHEMA_FILE) -> None:
@@ -100,6 +137,7 @@ def init_database_schema(engine: Engine, schema_path: Path | str = SCHEMA_FILE) 
     with engine.begin() as conn:
         for stmt in statements:
             conn.execute(text(stmt))
+
 
 
 def load_lookup_dataframe(lookup_path: Path | str = LOOKUP_FILE) -> Optional[pd.DataFrame]:

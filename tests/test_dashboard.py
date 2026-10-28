@@ -44,6 +44,26 @@ def test_custom_css_structure():
     assert "surge-badge" in CUSTOM_CSS
     assert "badge-base" in CUSTOM_CSS
     assert "badge-max" in CUSTOM_CSS
+    assert "badge-live-pulse" in CUSTOM_CSS
+    assert "surge-alert-banner" in CUSTOM_CSS
+
+
+def test_build_live_folium_map():
+    """Verifies that live streaming Folium map generates correctly with surge coloring."""
+    from dashboard.app import build_live_folium_map
+    sample_live_hotspots = pd.DataFrame({
+        "PULocationID": [132, 237, 161],
+        "zone_name": ["JFK Airport", "Upper East Side South", "Midtown Center"],
+        "borough": ["Queens", "Manhattan", "Manhattan"],
+        "live_trips_count": [45, 30, 22],
+        "avg_fare": [75.5, 18.2, 21.0],
+        "current_surge": [2.5, 1.8, 1.3],
+        "gross_revenue": [3397.5, 546.0, 462.0]
+    })
+    live_map = build_live_folium_map(sample_live_hotspots)
+    assert isinstance(live_map, folium.Map)
+    children_keys = list(live_map._children.keys())
+    assert len(children_keys) > 1
 
 
 def test_get_cached_engine_connectivity():
@@ -51,3 +71,4 @@ def test_get_cached_engine_connectivity():
     engine = get_cached_engine()
     assert engine is not None
     assert "sqlite" in str(engine.url)
+

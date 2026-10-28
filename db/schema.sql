@@ -60,6 +60,25 @@ CREATE TABLE IF NOT EXISTS daily_trends (
     avg_distance        REAL
 );
 
+-- 6. Live Streaming Telemetry Feed (Real-Time Ingestion Buffer)
+CREATE TABLE IF NOT EXISTS live_trips (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_time          TEXT NOT NULL,
+    PULocationID        INTEGER NOT NULL,
+    DOLocationID        INTEGER,
+    passenger_count     INTEGER DEFAULT 1,
+    trip_distance       REAL,
+    fare_amount         REAL,
+    tip_amount          REAL DEFAULT 0.0,
+    total_amount        REAL,
+    speed_mph           REAL,
+    duration_minutes    REAL,
+    zone_name           TEXT,
+    borough             TEXT,
+    surge_multiplier    REAL DEFAULT 1.0,
+    simulated_fare      REAL
+);
+
 -- High-performance indexes for Streamlit dashboard queries
 CREATE INDEX IF NOT EXISTS idx_hourly_demand_time ON hourly_demand(day_of_week, pickup_hour);
 CREATE INDEX IF NOT EXISTS idx_zone_heatmap_lookup ON zone_hourly_heatmap(PULocationID, day_of_week, pickup_hour);
@@ -67,3 +86,7 @@ CREATE INDEX IF NOT EXISTS idx_zone_heatmap_borough ON zone_hourly_heatmap(borou
 CREATE INDEX IF NOT EXISTS idx_surge_pricing_zone ON surge_pricing(PULocationID, day_of_week, pickup_hour);
 CREATE INDEX IF NOT EXISTS idx_surge_pricing_borough ON surge_pricing(borough, day_of_week, pickup_hour);
 CREATE INDEX IF NOT EXISTS idx_daily_trends_date ON daily_trends(pickup_date);
+CREATE INDEX IF NOT EXISTS idx_live_trips_event_time ON live_trips(event_time);
+CREATE INDEX IF NOT EXISTS idx_live_trips_puid ON live_trips(PULocationID);
+CREATE INDEX IF NOT EXISTS idx_live_trips_borough ON live_trips(borough);
+

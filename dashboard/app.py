@@ -23,6 +23,7 @@ from streamlit_folium import folium_static
 
 from src.config import DB_FILE
 from src.db import get_db_engine
+from src.streaming import get_stream_engine
 from src.queries import (
     DAYS_OF_WEEK,
     get_kpi_metrics,
@@ -33,6 +34,11 @@ from src.queries import (
     get_surge_pricing_distribution,
     get_distinct_filter_options,
     simulate_zone_surge,
+    get_live_stream_stats,
+    get_live_recent_feed,
+    get_live_active_hotspots,
+    get_live_throughput_history,
+    get_live_surge_alerts,
 )
 
 # Page Configuration
@@ -98,9 +104,58 @@ CUSTOM_CSS = """
     .badge-mid  { background-color: #F59E0B; color: #FFFFFF; }
     .badge-high { background-color: #EF4444; color: #FFFFFF; }
     .badge-max  { background-color: #8B5CF6; color: #FFFFFF; }
+
+    /* Streaming Status & Alert Badges */
+    .badge-live-pulse {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 16px;
+        border-radius: 20px;
+        font-weight: 700;
+        font-size: 0.88rem;
+        background: rgba(239, 68, 68, 0.15);
+        color: #F87171;
+        border: 1px solid rgba(239, 68, 68, 0.6);
+    }
+    .badge-idle-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 16px;
+        border-radius: 20px;
+        font-weight: 700;
+        font-size: 0.88rem;
+        background: rgba(100, 116, 139, 0.15);
+        color: #94A3B8;
+        border: 1px solid rgba(100, 116, 139, 0.4);
+    }
+    .live-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background-color: #EF4444;
+        box-shadow: 0 0 10px #EF4444;
+        animation: livePulse 1.2s infinite;
+    }
+    @keyframes livePulse {
+        0% { transform: scale(0.85); opacity: 0.6; }
+        50% { transform: scale(1.35); opacity: 1.0; }
+        100% { transform: scale(0.85); opacity: 0.6; }
+    }
+    .surge-alert-banner {
+        background: linear-gradient(90deg, rgba(239, 68, 68, 0.25) 0%, rgba(139, 92, 246, 0.25) 100%);
+        border: 1px solid rgba(239, 68, 68, 0.6);
+        border-radius: 10px;
+        padding: 12px 18px;
+        margin-bottom: 16px;
+        color: #F8FAFC;
+        font-size: 0.95rem;
+    }
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
 
 
 @st.cache_resource
@@ -220,6 +275,270 @@ def build_folium_map(hotspots_df: pd.DataFrame):
     return m
 
 
+def build_live_folium_map(hotspots_df: pd.DataFrame):
+    """Constructs a real-time Folium map color-coded by active surge tier."""
+    nyc_center = [40.730610, -73.935242]
+    m = folium.Map(location=nyc_center, zoom_start=11, tiles="OpenStreetMap")
+
+    if hotspots_df.empty:
+        return m
+
+    max_trips = hotspots_df["live_trips_count"].max() if not hotspots_df.empty else 1
+
+    for _, row in hotspots_df.iterrows():
+        puid = int(row["PULocationID"])
+        if puid in ZONE_COORDINATES:
+            lat, lon, label = ZONE_COORDINATES[puid]
+            trips = int(row["live_trips_count"])
+            fare = float(row["avg_fare"])
+            borough = str(row["borough"])
+            surge = float(row.get("current_surge", 1.0))
+            
+            radius = 8 + (trips / max_trips) * 20
+
+            if surge >= 2.5:
+                color = "#8B5CF6"  # Purple
+                tier_text = "2.5x Peak Surge"
+            elif surge >= 1.8:
+                color = "#EF4444"  # Red
+                tier_text = "1.8x High Surge"
+            elif surge >= 1.3:
+                color = "#F59E0B"  # Amber
+                tier_text = "1.3x Moderate Surge"
+            else:
+                color = "#10B981"  # Emerald
+                tier_text = "1.0x Normal"
+
+            popup_html = f"""
+            <div style="font-family: Arial; font-size: 13px; min-width: 170px;">
+                <b style="color: {color}; font-size: 14px;">{label}</b><br>
+                <b>Borough:</b> {borough}<br>
+                <b>Live Stream Rides:</b> {trips}<br>
+                <b>Active Surge:</b> <b style="color:{color};">{surge:.1f}x ({tier_text})</b><br>
+                <b>Simulated Avg Fare:</b> ${fare:.2f}
+            </div>
+            """
+
+            folium.CircleMarker(
+                location=[lat, lon],
+                radius=radius,
+                color=color,
+                fill=True,
+                fill_color=color,
+                fill_opacity=0.75,
+                weight=3,
+                tooltip=f"{label} | {surge:.1f}x Surge ({trips} rides)",
+                popup=folium.Popup(popup_html, max_width=300)
+            ).add_to(m)
+
+    return m
+
+
+def render_live_streaming_section(engine):
+    """Renders the Real-Time Streaming and Surge Monitoring interface."""
+    streamer = get_stream_engine()
+
+    st.markdown("### 🔴 Real-Time Streaming Telemetry & Dynamic Surge Engine")
+    st.markdown("Simulate and observe real-time taxi GPS event ingestion, dynamic surge multipliers, and velocity charts.")
+
+    # Control Bar
+    ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4, ctrl_col5 = st.columns([2.2, 1.2, 1.2, 1.4, 1.2])
+
+    with ctrl_col1:
+        if streamer.is_streaming_active():
+            rate = streamer.get_rate()
+            st.markdown(f'<div class="badge-live-pulse"><div class="live-dot"></div> <b>STREAMING ACTIVE</b> ({rate:.0f} rides/s)</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="badge-idle-status">⚪ <b>STREAMING IDLE / PAUSED</b></div>', unsafe_allow_html=True)
+
+    with ctrl_col2:
+        if st.button("▶ Start Stream", use_container_width=True, help="Starts background live taxi stream"):
+            streamer.start_background_streaming(rate_per_sec=15.0)
+            st.rerun()
+
+    with ctrl_col3:
+        if st.button("⏸ Pause", use_container_width=True, help="Pauses background stream thread"):
+            streamer.stop_background_streaming()
+            st.rerun()
+
+    with ctrl_col4:
+        if st.button("⚡ Burst (50 Rides)", use_container_width=True, help="Instantly injects 50 real taxi rides"):
+            streamer.inject_trips(count=50)
+            st.rerun()
+
+    with ctrl_col5:
+        if st.button("🗑️ Clear Buffer", use_container_width=True, help="Flushes live streaming database buffer"):
+            streamer.clear_live_buffer()
+            st.rerun()
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Isolated auto-refreshing fragment for real-time visualization
+    @st.fragment(run_every="2s")
+    def render_live_telemetry_fragment():
+        stats = get_live_stream_stats(engine)
+        total_trips = stats["total_streamed"]
+
+        # Alert Banners
+        alerts = get_live_surge_alerts(engine)
+        for alert in alerts:
+            st.markdown(
+                f"""
+                <div class="surge-alert-banner">
+                    🔥 <b>LIVE SURGE ALERT:</b> <b>{alert['zone_name']}</b> ({alert['borough']}) is experiencing 
+                    <b>{alert['surge_multiplier']:.1f}x SURGE</b> with <b>{alert['trips_in_surge']}</b> active dispatches!
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+        # 4 Metric Cards
+        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+
+        with col_m1:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">Ingestion Velocity</div>
+                <div class="metric-value">{stats['throughput_rps']:.1f} <span style="font-size: 1rem; color: #94A3B8;">rps</span></div>
+                <div class="metric-sub">Real-Time Ingestion Throughput</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with col_m2:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">Total Streamed Rides</div>
+                <div class="metric-value">{total_trips:,}</div>
+                <div class="metric-sub">{stats['active_zones']} Active Pickup Zones</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with col_m3:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">Live Gross Revenue</div>
+                <div class="metric-value">${stats['total_revenue']:,.2f}</div>
+                <div class="metric-sub">Avg Surged Fare: ${stats['avg_fare']:.2f}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with col_m4:
+            surge_color = "#8B5CF6" if stats['max_multiplier'] >= 2.5 else ("#EF4444" if stats['max_multiplier'] >= 1.8 else "#10B981")
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">Peak Live Multiplier</div>
+                <div class="metric-value" style="color: {surge_color};">{stats['max_multiplier']:.1f}x</div>
+                <div class="metric-sub">{stats['top_zone_name'][:20]}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        if total_trips == 0:
+            st.info("💡 The live stream buffer is currently empty. Click **'▶ Start Stream'** or **'⚡ Burst (50 Rides)'** above, or run `python scripts/05_stream_producer.py` in your terminal to see real-time rides arrive!")
+            return
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # Real-time Chart & Hotspots Columns
+        chart_col1, chart_col2 = st.columns([1, 1])
+
+        with chart_col1:
+            st.markdown("#### ⚡ Real-Time Ride Arrival Velocity (Trips / Sec)")
+            hist_df = get_live_throughput_history(engine, limit=20)
+            if not hist_df.empty:
+                fig_stream = go.Figure()
+                fig_stream.add_trace(go.Scatter(
+                    x=hist_df["time_sec"],
+                    y=hist_df["rides_count"],
+                    mode="lines+markers",
+                    name="Arrivals",
+                    line=dict(color="#EF4444", width=3),
+                    marker=dict(size=8, color="#F87171"),
+                    fill="tozeroy",
+                    fillcolor="rgba(239, 68, 68, 0.15)"
+                ))
+                fig_stream.update_layout(
+                    title="Live Event Ingestion Pulse",
+                    xaxis_title="Timestamp",
+                    yaxis_title="Trips Ingested",
+                    height=340,
+                    margin=dict(l=20, r=20, t=35, b=20),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)"
+                )
+                st.plotly_chart(fig_stream, use_container_width=True)
+            else:
+                st.caption("Awaiting arrival time series...")
+
+        with chart_col2:
+            st.markdown("#### 🏆 Active Streaming Hotspots & Surge Multiplier")
+            hotspots_df = get_live_active_hotspots(engine, limit=8)
+            if not hotspots_df.empty:
+                # Color map based on current surge
+                color_map = {
+                    1.0: "#10B981",
+                    1.3: "#F59E0B",
+                    1.8: "#EF4444",
+                    2.5: "#8B5CF6"
+                }
+                bar_colors = [color_map.get(s, "#38BDF8") for s in hotspots_df["current_surge"]]
+
+                fig_hotspots = go.Figure(go.Bar(
+                    x=hotspots_df["live_trips_count"],
+                    y=hotspots_df["zone_name"],
+                    orientation="h",
+                    marker=dict(color=bar_colors),
+                    text=[f"{s:.1f}x Surge" for s in hotspots_df["current_surge"]],
+                    textposition="auto"
+                ))
+                fig_hotspots.update_layout(
+                    title="Live Demand Volume by Zone",
+                    xaxis_title="Streamed Rides",
+                    yaxis=dict(autorange="reversed"),
+                    height=340,
+                    margin=dict(l=20, r=20, t=35, b=20),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)"
+                )
+                st.plotly_chart(fig_hotspots, use_container_width=True)
+            else:
+                st.caption("Awaiting zone activity...")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # Geospatial Live Map & Dispatches Feed
+        map_col, feed_col = st.columns([1, 1])
+
+        with map_col:
+            st.markdown("#### 🗺️ Live NYC Geospatial Surge Map")
+            live_map = build_live_folium_map(hotspots_df)
+            folium_static(live_map, width=580, height=400)
+
+        with feed_col:
+            st.markdown("#### 📡 Real-Time GPS Telemetry Dispatches Feed")
+            feed_df = get_live_recent_feed(engine, limit=12)
+            if not feed_df.empty:
+                display_feed = feed_df.rename(columns={
+                    "event_time": "Time",
+                    "zone_name": "Pickup Zone",
+                    "borough": "Borough",
+                    "trip_distance": "Dist (mi)",
+                    "fare_amount": "Base ($)",
+                    "surge_multiplier": "Surge",
+                    "simulated_fare": "Final ($)",
+                    "speed_mph": "Speed (mph)"
+                })
+                st.dataframe(
+                    display_feed,
+                    use_container_width=True,
+                    hide_index=True,
+                    height=390
+                )
+            else:
+                st.caption("Awaiting telemetry records...")
+
+    render_live_telemetry_fragment()
+
+
 def main():
     engine = get_cached_engine()
 
@@ -265,12 +584,14 @@ def main():
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Main Tabs
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📈 Demand & Congestion",
         "📍 Pickup Hotspots & Map",
         "⚡ Surge Pricing Simulator",
-        "📅 Macro Daily Trends"
+        "📅 Macro Daily Trends",
+        "🔴 Real-Time Streaming"
     ])
+
 
     # TAB 1: DEMAND & CONGESTION
     with tab1:
@@ -281,8 +602,8 @@ def main():
             fig_heatmap = px.imshow(
                 heatmap_df,
                 labels=dict(x="Hour of Day (0–23)", y="Day of Week", color="Ride Volume"),
-                x=list(range(24)),
-                y=heatmap_df.index,
+                x=list(heatmap_df.columns),
+                y=list(heatmap_df.index),
                 color_continuous_scale="Plasma",
                 aspect="auto"
             )
@@ -489,6 +810,11 @@ def main():
         else:
             st.info("No daily trend data available.")
 
+    # TAB 5: REAL-TIME STREAMING & SURGE ENGINE
+    with tab5:
+        render_live_streaming_section(engine)
+
 
 if __name__ == "__main__":
+
     main()

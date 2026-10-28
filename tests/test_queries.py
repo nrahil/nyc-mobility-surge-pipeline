@@ -46,6 +46,14 @@ def populated_test_db(tmp_path):
                 (5, 23, 3000, 28.0, 16.0, 1.6, 84000.0)
         """))
 
+        # Seed zone_hourly_heatmap
+        conn.execute(text("""
+            INSERT INTO zone_hourly_heatmap (PULocationID, zone_name, borough, day_of_week, pickup_hour, trip_count, avg_fare, avg_speed_mph)
+            VALUES 
+                (132, 'JFK Airport', 'Queens', 0, 18, 500, 60.0, 15.0),
+                (237, 'Upper East Side South', 'Manhattan', 0, 18, 400, 15.0, 8.0)
+        """))
+
         # Seed surge_pricing
         conn.execute(text("""
             INSERT INTO surge_pricing (PULocationID, zone_name, borough, day_of_week, pickup_hour, trip_count, avg_fare, surge_multiplier, simulated_fare)
@@ -114,3 +122,21 @@ def test_get_distinct_filter_options(populated_test_db):
     assert "Manhattan" in boroughs
     assert "JFK Airport" in zones
     assert zones["JFK Airport"] == 132
+
+
+def test_get_hourly_heatmap_data(populated_test_db):
+    """Verifies that heatmap data always returns a complete 7x24 grid."""
+    heatmap_all = get_hourly_heatmap_data(populated_test_db)
+    assert heatmap_all.shape == (7, 24)
+    assert list(heatmap_all.columns) == list(range(24))
+    assert list(heatmap_all.index) == ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    assert heatmap_all.loc["Monday", 8] == 1200
+    assert heatmap_all.loc["Monday", 18] == 2500
+    assert heatmap_all.loc["Monday", 0] == 0  # Missing hour is 0-filled
+
+    # Sparse borough test
+    heatmap_queens = get_hourly_heatmap_data(populated_test_db, borough="Queens")
+    assert heatmap_queens.shape == (7, 24)
+    assert heatmap_queens.loc["Monday", 18] == 500
+    assert heatmap_queens.loc["Monday", 0] == 0
+

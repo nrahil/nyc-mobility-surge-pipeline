@@ -108,9 +108,10 @@ def get_hourly_heatmap_data(engine: Engine, borough: Optional[str] = None) -> pd
     if df.empty:
         return pd.DataFrame()
 
-    # Pivot into 7 rows x 24 columns
+    # Pivot into 7 rows x 24 columns (ensuring complete 7x24 grid even for sparse boroughs)
     pivot_df = df.pivot(index="day_of_week", columns="pickup_hour", values="trip_count").fillna(0)
-    pivot_df.index = [DAYS_OF_WEEK[i] for i in pivot_df.index if i < len(DAYS_OF_WEEK)]
+    pivot_df = pivot_df.reindex(index=range(7), columns=range(24), fill_value=0)
+    pivot_df.index = DAYS_OF_WEEK
     return pivot_df
 
 
@@ -262,3 +263,166 @@ def simulate_zone_surge(
         if row:
             return dict(row)
         return None
+
+
+# ====================================================================
+# Real-Time Live Streaming Queries
+# ====================================================================
+
+def get_live_stream_stats(engine: Engine) -> Dict[str, Any]:
+    """
+    Computes real-time streaming metrics:
+    Total events, active rate (trips/sec), gross revenue, average fare,
+    average speed, and top surging zone.
+    """
+    with engine.connect() as conn:
+        stats_sql = """
+            SELECT 
+                COUNT(*) AS total_streamed,
+                COALESCE(SUM(simulated_fare), 0.0) AS total_revenue,
+                COALESCE(AVG(simulated_fare), 0.0) AS avg_fare,
+                COALESCE(AVG(speed_mph), 14.5) AS avg_speed,
+                COALESCE(AVG(trip_distance), 0.0) AS avg_distance,
+                COUNT(DISTINCT PULocationID) AS active_zones,
+                COALESCE(MAX(surge_multiplier), 1.0) AS max_multiplier
+            FROM live_trips;
+        """
+        stats_res = conn.execute(text(stats_sql)).mappings().fetchone()
+
+        # Throughput in last 20 seconds
+        rate_sql = """
+            SELECT COUNT(*) AS recent_count
+            FROM live_trips
+            WHERE event_time >= datetime('now', '-20 seconds');
+        """
+        recent_res = conn.execute(text(rate_sql)).mappings().fetchone()
+
+        # Top surging zone currently
+        top_surge_sql = """
+            SELECT zone_name, borough, surge_multiplier, COUNT(*) as zone_trips
+            FROM live_trips
+            WHERE event_time >= datetime('now', '-60 seconds')
+            GROUP BY zone_name, borough, surge_multiplier
+            ORDER BY surge_multiplier DESC, zone_trips DESC
+            LIMIT 1;
+        """
+        top_surge = conn.execute(text(top_surge_sql)).mappings().fetchone()
+
+    total_streamed = int(stats_res["total_streamed"]) if stats_res else 0
+    total_revenue = float(stats_res["total_revenue"]) if stats_res else 0.0
+    avg_fare = float(stats_res["avg_fare"]) if stats_res else 0.0
+    avg_speed = float(stats_res["avg_speed"]) if stats_res else 14.5
+    avg_distance = float(stats_res["avg_distance"]) if stats_res else 0.0
+    active_zones = int(stats_res["active_zones"]) if stats_res else 0
+    max_multiplier = float(stats_res["max_multiplier"]) if stats_res else 1.0
+
+    recent_trips = int(recent_res["recent_count"]) if recent_res else 0
+    # Approximate throughput
+    throughput_rps = round(recent_trips / 20.0, 1)
+
+    top_zone_name = top_surge["zone_name"] if top_surge else "Midtown / JFK"
+    top_zone_mult = float(top_surge["surge_multiplier"]) if top_surge else 1.0
+
+    return {
+        "total_streamed": total_streamed,
+        "throughput_rps": throughput_rps,
+        "total_revenue": round(total_revenue, 2),
+        "avg_fare": round(avg_fare, 2),
+        "avg_speed": round(avg_speed, 1),
+        "avg_distance": round(avg_distance, 2),
+        "active_zones": active_zones,
+        "max_multiplier": max_multiplier,
+        "top_zone_name": top_zone_name,
+        "top_zone_multiplier": top_zone_mult
+    }
+
+
+def get_live_recent_feed(engine: Engine, limit: int = 15) -> pd.DataFrame:
+    """
+    Returns the most recent streaming rides for the live telemetry log table.
+    """
+    sql = """
+        SELECT 
+            event_time,
+            zone_name,
+            borough,
+            trip_distance,
+            fare_amount,
+            surge_multiplier,
+            simulated_fare,
+            speed_mph
+        FROM live_trips
+        ORDER BY id DESC
+        LIMIT :limit;
+    """
+    with engine.connect() as conn:
+        df = pd.read_sql_query(text(sql), conn, params={"limit": limit})
+    return df
+
+
+def get_live_active_hotspots(engine: Engine, limit: int = 10) -> pd.DataFrame:
+    """
+    Returns top active pickup zones in the live buffer with surge tiers and volumes.
+    """
+    sql = """
+        SELECT 
+            PULocationID,
+            zone_name,
+            borough,
+            COUNT(*) AS live_trips_count,
+            ROUND(AVG(simulated_fare), 2) AS avg_fare,
+            ROUND(MAX(surge_multiplier), 1) AS current_surge,
+            ROUND(SUM(simulated_fare), 2) AS gross_revenue
+        FROM live_trips
+        GROUP BY PULocationID, zone_name, borough
+        ORDER BY live_trips_count DESC
+        LIMIT :limit;
+    """
+    with engine.connect() as conn:
+        df = pd.read_sql_query(text(sql), conn, params={"limit": limit})
+    return df
+
+
+def get_live_throughput_history(engine: Engine, limit: int = 25) -> pd.DataFrame:
+    """
+    Aggregates ride arrivals across time slices for the real-time velocity chart.
+    """
+    sql = """
+        SELECT 
+            strftime('%H:%M:%S', event_time) AS time_sec,
+            COUNT(*) AS rides_count,
+            ROUND(AVG(simulated_fare), 2) AS avg_fare,
+            ROUND(MAX(surge_multiplier), 1) AS max_surge
+        FROM live_trips
+        GROUP BY time_sec
+        ORDER BY event_time DESC
+        LIMIT :limit;
+    """
+    with engine.connect() as conn:
+        df = pd.read_sql_query(text(sql), conn, params={"limit": limit})
+    
+    if not df.empty:
+        df = df.iloc[::-1].reset_index(drop=True)
+    return df
+
+
+def get_live_surge_alerts(engine: Engine) -> List[Dict[str, Any]]:
+    """
+    Identifies zones currently experiencing elevated or severe surge (>= 1.8x).
+    """
+    sql = """
+        SELECT 
+            zone_name,
+            borough,
+            MAX(surge_multiplier) AS surge_multiplier,
+            COUNT(*) AS trips_in_surge
+        FROM live_trips
+        WHERE surge_multiplier >= 1.8
+        GROUP BY zone_name, borough
+        ORDER BY surge_multiplier DESC, trips_in_surge DESC
+        LIMIT 4;
+    """
+    with engine.connect() as conn:
+        rows = conn.execute(text(sql)).mappings().fetchall()
+    return [dict(r) for r in rows]
+

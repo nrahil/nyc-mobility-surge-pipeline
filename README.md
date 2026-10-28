@@ -12,6 +12,8 @@ graph LR
     B --> C["📈 Surge Pricing Engine\nPercentile Demand Model"]
     C --> D["🛢️ SQLite / PostgreSQL\nAggregated Serving Layer"]
     D --> E["📊 Streamlit Web UI\nInteractive Analytics Dashboard"]
+    F["📡 Live Stream Producer\n(scripts/05_stream_producer.py)"] -->|Real-Time Telemetry| D
+    D -->|@st.fragment Auto-Refresh| E
 ```
 
 ---
@@ -24,7 +26,7 @@ BDA_project/
 ├── requirements.txt               # Pinned Python package dependencies
 ├── README.md                      # Project documentation and execution instructions
 ├── data/
-│   ├── raw/                       # Place downloaded NYC TLC Parquet files here
+│   ├── raw/                       # NYC TLC Yellow Taxi Parquet files
 │   ├── processed/                 # Spark output CSVs (aggregated summaries)
 │   └── lookup/
 │       └── taxi_zone_lookup.csv   # NYC Taxi zone metadata
@@ -32,12 +34,18 @@ BDA_project/
 │   ├── 01_ingest_validate.py      # Schema check and raw data validation
 │   ├── 02_spark_process.py        # Core PySpark cleaning, features & aggregations
 │   ├── 03_load_to_db.py           # Loads processed CSV summaries into SQLite/Postgres
-│   └── 04_surge_pricing.py        # Dynamic surge multiplier simulation engine
+│   ├── 04_surge_pricing.py        # Dynamic surge multiplier simulation engine
+│   └── 05_stream_producer.py      # Real-time streaming telemetry producer
+├── src/
+│   ├── streaming.py               # Real-time live streaming engine & background threader
+│   ├── queries.py                 # Analytical & streaming queries for dashboard
+│   ├── surge.py                   # Percentile-based surge multiplier calculator
+│   └── ...
 ├── dashboard/
-│   └── app.py                     # Interactive Streamlit analytics dashboard
+│   └── app.py                     # Streamlit dashboard with Real-Time Streaming Tab
 └── db/
-    ├── schema.sql                 # Serving layer database schema
-    └── mobility.db                # SQLite database (auto-populated by script 03)
+    ├── schema.sql                 # Serving layer database schema (including live_trips)
+    └── mobility.db                # SQLite serving database (WAL mode)
 ```
 
 ---
@@ -50,10 +58,10 @@ BDA_project/
 ```
 
 ### 2. Verify Raw Files
-Place your 3–6 months of Yellow Taxi `.parquet` files in `data/raw/` and `taxi_zone_lookup.csv` in `data/lookup/`.
+Place your Yellow Taxi `.parquet` files in `data/raw/` and `taxi_zone_lookup.csv` in `data/lookup/`.
 
 ### 3. Pipeline Execution Sequence
-Run the scripts in order:
+Run the batch pipeline:
 
 ```powershell
 # Step 1: Validate data and inspect schemas
@@ -71,3 +79,23 @@ python scripts/03_load_to_db.py
 # Step 5: Launch the Streamlit dashboard
 streamlit run dashboard/app.py
 ```
+
+---
+
+## 🔴 Real-Time Live Streaming Demonstration
+
+You can demonstrate live streaming in **two flexible ways**:
+
+### Method A: Directly inside the Streamlit Web UI
+1. Launch `streamlit run dashboard/app.py`
+2. Navigate to tab **"🔴 Real-Time Streaming"**
+3. Click **"▶ Start Stream"** to initiate background ride generation, or click **"⚡ Burst (50 Rides)"** for instant injection.
+4. Watch the telemetry feed, velocity chart, and surge map update dynamically every 2 seconds without page refreshes!
+
+### Method B: Standalone Terminal Stream Producer
+Run the dedicated CLI producer in a separate PowerShell window:
+```powershell
+python scripts/05_stream_producer.py --rate 15 --batch-size 5
+```
+Watch real-time ride arrivals streamed into `live_trips` while the Streamlit dashboard visualizes incoming traffic and live surge tier escalation!
+
