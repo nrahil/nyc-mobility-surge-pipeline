@@ -1,24 +1,24 @@
-# 🚕 Urban Mobility & Surge Pricing Analytics
+# NYC Mobility Intelligence
 
 An end-to-end Big Data analytics pipeline that analyzes millions of NYC taxi rides to uncover traffic congestion patterns, identify lucrative pickup hotspots by time of day, and simulate real-time surge pricing rules.
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```mermaid
 graph LR
-    A["📥 NYC TLC Parquet Files\n(Raw Data Lake)"] --> B["⚡ Apache Spark (PySpark)\nETL & Feature Engineering"]
-    B --> C["📈 Surge Pricing Engine\nPercentile Demand Model"]
-    C --> D["🛢️ SQLite / PostgreSQL\nAggregated Serving Layer"]
-    D --> E["📊 Streamlit Web UI\nInteractive Analytics Dashboard"]
-    F["📡 Live Stream Producer\n(scripts/05_stream_producer.py)"] -->|Real-Time Telemetry| D
+    A["NYC TLC Parquet Files\nRaw Data Lake"] --> B["Apache Spark\nETL and Feature Engineering"]
+    B --> C["Pricing Engine\nPercentile Demand Model"]
+    C --> D["SQLite / PostgreSQL\nServing Layer"]
+    D --> E["Streamlit\nIntelligence Dashboard"]
+    F["Live Stream Producer"] -->|Real-Time Telemetry| D
     D -->|@st.fragment Auto-Refresh| E
 ```
 
 ---
 
-## 📁 Project Structure
+## Project structure
 
 ```
 BDA_project/
@@ -50,12 +50,14 @@ BDA_project/
 
 ---
 
-## 🚀 Quickstart Guide
+## Quickstart guide
 
 ### 1. Activate Virtual Environment
 ```powershell
 .\.venv\Scripts\activate
 ```
+
+On Windows, the project automatically uses the Java 17 runtime under `.runtime/java` for PySpark. A separate system-wide Java installation is not required when that folder is present.
 
 ### 2. Verify Raw Files
 Place your Yellow Taxi `.parquet` files in `data/raw/` and `taxi_zone_lookup.csv` in `data/lookup/`.
@@ -76,20 +78,25 @@ python scripts/04_surge_pricing.py
 # Step 4: Populate the serving database
 python scripts/03_load_to_db.py
 
-# Step 5: Launch the Streamlit dashboard
+# Step 5: Train and evaluate the ML demand forecast
+python scripts/06_train_demand_model.py
+
+# Step 6: Launch the Streamlit dashboard
 streamlit run dashboard/app.py
 ```
 
+The training script fits a histogram gradient-boosting regressor on dated hourly demand. It uses the final 30 days as a chronological test set, writes the model to `models/demand_forecast.joblib`, and records its comparison with the seasonal baseline in `models/demand_forecast_metrics.json`.
+
 ---
 
-## 🔴 Real-Time Live Streaming Demonstration
+## Real-time streaming demonstration
 
 You can demonstrate live streaming in **two flexible ways**:
 
 ### Method A: Directly inside the Streamlit Web UI
 1. Launch `streamlit run dashboard/app.py`
-2. Navigate to tab **"🔴 Real-Time Streaming"**
-3. Click **"▶ Start Stream"** to initiate background ride generation, or click **"⚡ Burst (50 Rides)"** for instant injection.
+2. Navigate to **Live Operations**.
+3. Select **Start stream** to begin background ride generation, or **Inject 50 rides** for an immediate demonstration.
 4. Watch the telemetry feed, velocity chart, and surge map update dynamically every 2 seconds without page refreshes!
 
 ### Method B: Standalone Terminal Stream Producer

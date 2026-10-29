@@ -5,10 +5,14 @@ High-performance analytical queries for the Streamlit dashboard.
 All queries use parameterized filtering against SQLite/PostgreSQL serving layers.
 """
 
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any
+from zoneinfo import ZoneInfo
 import pandas as pd
 import numpy as np
 from sqlalchemy import text, Engine
+
+from src.ml_forecast import predict as predict_ml_demand
 
 DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
@@ -261,8 +265,107 @@ def simulate_zone_surge(
     with engine.connect() as conn:
         row = conn.execute(text(sql), params).mappings().fetchone()
         if row:
-            return dict(row)
+            result = dict(row)
+            history = conn.execute(
+                text("SELECT trip_count FROM surge_pricing WHERE PULocationID = :puid"),
+                {"puid": pulocation_id},
+            ).scalars().all()
+            if history:
+                p50, p75, p90 = np.percentile(history, [50, 75, 90])
+                demand = float(result["trip_count"])
+                percentile = float((np.asarray(history) <= demand).mean() * 100)
+                result.update({
+                    "p50": round(float(p50), 1),
+                    "p75": round(float(p75), 1),
+                    "p90": round(float(p90), 1),
+                    "demand_percentile": round(percentile, 1),
+                    "fare_uplift": round(float(result["simulated_fare"]) - float(result["avg_fare"]), 2),
+                })
+            return result
         return None
+
+
+def get_demand_forecast(
+    engine: Engine,
+    borough: Optional[str] = None,
+    horizon: int = 6,
+    reference_time: Optional[datetime] = None,
+    use_ml: bool = True,
+) -> pd.DataFrame:
+    """Return an ML demand forecast, with the seasonal profile as a safe fallback."""
+    now = reference_time or datetime.now(ZoneInfo("America/New_York"))
+    forecast_times = [
+        (now + timedelta(hours=offset)).replace(minute=0, second=0, microsecond=0)
+        for offset in range(1, horizon + 1)
+    ]
+    ml_forecast = predict_ml_demand(forecast_times, borough or "All Boroughs") if use_ml else None
+    if ml_forecast is not None:
+        return ml_forecast
+    params: Dict[str, Any] = {}
+    if borough and borough != "All Boroughs":
+        sql = """
+            SELECT day_of_week, pickup_hour, SUM(trip_count) AS trip_count
+            FROM zone_hourly_heatmap
+            WHERE borough = :borough
+            GROUP BY day_of_week, pickup_hour
+        """
+        params["borough"] = borough
+    else:
+        sql = """
+            SELECT day_of_week, pickup_hour, SUM(trip_count) AS trip_count
+            FROM hourly_demand
+            GROUP BY day_of_week, pickup_hour
+        """
+    with engine.connect() as conn:
+        profile = pd.read_sql_query(text(sql), conn, params=params)
+    if profile.empty:
+        return pd.DataFrame(columns=["forecast_time", "predicted_trips", "lower_bound", "upper_bound"])
+
+    lookup = {(int(r.day_of_week), int(r.pickup_hour)): float(r.trip_count) for r in profile.itertuples()}
+    values = np.asarray(list(lookup.values()), dtype=float)
+    relative_spread = max(0.08, min(0.25, float(values.std() / max(values.mean(), 1)) * 0.25))
+    rows = []
+    for offset in range(1, horizon + 1):
+        forecast_time = forecast_times[offset - 1]
+        predicted = lookup.get((forecast_time.weekday(), forecast_time.hour), float(values.mean()))
+        rows.append({
+            "forecast_time": forecast_time,
+            "predicted_trips": int(round(predicted)),
+            "lower_bound": int(round(predicted * (1 - relative_spread))),
+            "upper_bound": int(round(predicted * (1 + relative_spread))),
+            "forecast_method": "Historical weekday-hour seasonal fallback",
+        })
+    result = pd.DataFrame(rows)
+    result.attrs["method"] = "Historical weekday-hour seasonal fallback"
+    return result
+
+
+def get_demand_spike_alerts(
+    engine: Engine,
+    borough: Optional[str] = None,
+    limit: int = 5,
+) -> pd.DataFrame:
+    """Identify zone-hour observations that are unusually high versus each zone baseline."""
+    params: Dict[str, Any] = {}
+    where_clause = ""
+    if borough and borough != "All Boroughs":
+        where_clause = "WHERE borough = :borough"
+        params["borough"] = borough
+    sql = f"""
+        SELECT PULocationID, zone_name, borough, day_of_week, pickup_hour, trip_count
+        FROM zone_hourly_heatmap
+        {where_clause}
+    """
+    with engine.connect() as conn:
+        demand = pd.read_sql_query(text(sql), conn, params=params)
+    if demand.empty:
+        return demand
+    baseline = demand.groupby("PULocationID")["trip_count"].transform("median").clip(lower=1)
+    demand["baseline_trips"] = baseline.round().astype(int)
+    demand["increase_pct"] = ((demand["trip_count"] / baseline - 1) * 100).round(1)
+    demand = demand[demand["increase_pct"] >= 35].copy()
+    demand["severity"] = np.where(demand["increase_pct"] >= 100, "Critical", "Elevated")
+    return demand.sort_values(["increase_pct", "trip_count"], ascending=False).head(limit).reset_index(drop=True)
 
 
 # ====================================================================

@@ -19,7 +19,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import folium
-from streamlit_folium import folium_static
+from streamlit_folium import st_folium
 
 from src.config import DB_FILE
 from src.db import get_db_engine
@@ -39,12 +39,14 @@ from src.queries import (
     get_live_active_hotspots,
     get_live_throughput_history,
     get_live_surge_alerts,
+    get_demand_forecast,
+    get_demand_spike_alerts,
 )
 
 # Page Configuration
 st.set_page_config(
-    page_title="NYC Urban Mobility & Surge Pricing",
-    page_icon="🚕",
+    page_title="NYC Mobility Intelligence",
+    page_icon="NY",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -152,6 +154,20 @@ CUSTOM_CSS = """
         color: #F8FAFC;
         font-size: 0.95rem;
     }
+    .professional-header {
+        padding: 8px 0 18px 0;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+        margin-bottom: 22px;
+    }
+    .professional-header h1 { margin: 0; font-size: 2rem; color: #F8FAFC; }
+    .professional-header p { margin: 6px 0 0; color: #94A3B8; }
+    .insight-card {
+        background: rgba(15, 23, 42, 0.65);
+        border-left: 4px solid #38BDF8;
+        border-radius: 8px;
+        padding: 14px 16px;
+        margin-bottom: 10px;
+    }
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
@@ -229,6 +245,48 @@ def render_kpi_cards(kpis: dict):
         </div>
         """, unsafe_allow_html=True)
 
+
+def render_executive_intelligence(engine, borough: str):
+    """Render forecast, operating outlook, and historical demand-spike intelligence."""
+    forecast = get_demand_forecast(engine, borough=borough, horizon=6)
+    alerts = get_demand_spike_alerts(engine, borough=borough, limit=4)
+
+    st.markdown("### Executive outlook")
+    if not forecast.empty:
+        forecast_method = (
+            str(forecast.iloc[0]["forecast_method"])
+            if "forecast_method" in forecast.columns
+            else forecast.attrs.get("method", "Demand forecast")
+        )
+        next_hour = forecast.iloc[0]
+        peak = forecast.loc[forecast["predicted_trips"].idxmax()]
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Next-hour demand", f"{int(next_hour['predicted_trips']):,} rides", help=forecast_method)
+        c2.metric("Six-hour peak", f"{int(peak['predicted_trips']):,} rides", peak["forecast_time"].strftime("%A %H:00"))
+        c3.metric("Detected demand spikes", f"{len(alerts)} priority zones", help="At least 35% above the zone baseline")
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=forecast["forecast_time"], y=forecast["upper_bound"], line=dict(width=0), hoverinfo="skip", showlegend=False))
+        fig.add_trace(go.Scatter(x=forecast["forecast_time"], y=forecast["lower_bound"], line=dict(width=0), fill="tonexty", fillcolor="rgba(56,189,248,0.16)", name="Expected range"))
+        fig.add_trace(go.Scatter(x=forecast["forecast_time"], y=forecast["predicted_trips"], mode="lines+markers", name="Forecast demand", line=dict(color="#38BDF8", width=3), marker=dict(size=8)))
+        fig.update_layout(title="Next six hours: demand forecast", xaxis_title="New York time", yaxis_title="Expected rides", height=330, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", legend=dict(orientation="h", y=1.12))
+        st.plotly_chart(fig, width="stretch")
+        st.caption(f"Forecast method: {forecast_method}, with an uncertainty band. This is an operational planning estimate, not a live demand guarantee.")
+
+    st.markdown("#### Priority demand-spike alerts")
+    if alerts.empty:
+        st.success("No historical zone-hour observations exceed the alert threshold in this scope.")
+    else:
+        cols = st.columns(min(2, len(alerts)))
+        for idx, row in alerts.iterrows():
+            with cols[idx % len(cols)]:
+                st.markdown(
+                    f'<div class="insight-card"><b>{row["severity"]}: {row["zone_name"]}</b><br>'
+                    f'<span style="color:#94A3B8">{DAYS_OF_WEEK[int(row["day_of_week"])]} at {int(row["pickup_hour"]):02d}:00</span><br>'
+                    f'Demand is <b>{row["increase_pct"]:.0f}% above</b> its zone baseline '
+                    f'({int(row["trip_count"]):,} vs. {int(row["baseline_trips"]):,} rides).</div>',
+                    unsafe_allow_html=True,
+                )
 
 def build_folium_map(hotspots_df: pd.DataFrame):
     """Constructs an interactive Folium map with NYC hotspots."""
@@ -337,37 +395,38 @@ def build_live_folium_map(hotspots_df: pd.DataFrame):
 def render_live_streaming_section(engine):
     """Renders the Real-Time Streaming and Surge Monitoring interface."""
     streamer = get_stream_engine()
+    if "live_stream_active" not in st.session_state:
+        st.session_state.live_stream_active = False
 
-    st.markdown("### 🔴 Real-Time Streaming Telemetry & Dynamic Surge Engine")
-    st.markdown("Simulate and observe real-time taxi GPS event ingestion, dynamic surge multipliers, and velocity charts.")
+    st.markdown("### Live operations and dynamic pricing")
+    st.markdown("Observe simulated taxi event ingestion, dynamic pricing recommendations and arrival velocity.")
 
     # Control Bar
     ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4, ctrl_col5 = st.columns([2.2, 1.2, 1.2, 1.4, 1.2])
 
     with ctrl_col1:
-        if streamer.is_streaming_active():
-            rate = streamer.get_rate()
-            st.markdown(f'<div class="badge-live-pulse"><div class="live-dot"></div> <b>STREAMING ACTIVE</b> ({rate:.0f} rides/s)</div>', unsafe_allow_html=True)
+        if st.session_state.live_stream_active:
+            st.markdown('<div class="badge-live-pulse"><div class="live-dot"></div> <b>STREAMING ACTIVE</b> (15 rides/s)</div>', unsafe_allow_html=True)
         else:
-            st.markdown('<div class="badge-idle-status">⚪ <b>STREAMING IDLE / PAUSED</b></div>', unsafe_allow_html=True)
+            st.markdown('<div class="badge-idle-status"><b>STREAMING IDLE / PAUSED</b></div>', unsafe_allow_html=True)
 
     with ctrl_col2:
-        if st.button("▶ Start Stream", use_container_width=True, help="Starts background live taxi stream"):
-            streamer.start_background_streaming(rate_per_sec=15.0)
+        if st.button("Start stream", width="stretch", help="Starts background live taxi stream"):
+            st.session_state.live_stream_active = True
             st.rerun()
 
     with ctrl_col3:
-        if st.button("⏸ Pause", use_container_width=True, help="Pauses background stream thread"):
-            streamer.stop_background_streaming()
+        if st.button("Pause", width="stretch", help="Pauses background stream thread"):
+            st.session_state.live_stream_active = False
             st.rerun()
 
     with ctrl_col4:
-        if st.button("⚡ Burst (50 Rides)", use_container_width=True, help="Instantly injects 50 real taxi rides"):
+        if st.button("Inject 50 rides", width="stretch", help="Instantly injects 50 simulated taxi rides"):
             streamer.inject_trips(count=50)
             st.rerun()
 
     with ctrl_col5:
-        if st.button("🗑️ Clear Buffer", use_container_width=True, help="Flushes live streaming database buffer"):
+        if st.button("Clear buffer", width="stretch", help="Flushes live streaming database buffer"):
             streamer.clear_live_buffer()
             st.rerun()
 
@@ -376,6 +435,8 @@ def render_live_streaming_section(engine):
     # Isolated auto-refreshing fragment for real-time visualization
     @st.fragment(run_every="2s")
     def render_live_telemetry_fragment():
+        if st.session_state.get("live_stream_active", False):
+            streamer.inject_trips(count=30)
         stats = get_live_stream_stats(engine)
         total_trips = stats["total_streamed"]
 
@@ -385,7 +446,7 @@ def render_live_streaming_section(engine):
             st.markdown(
                 f"""
                 <div class="surge-alert-banner">
-                    🔥 <b>LIVE SURGE ALERT:</b> <b>{alert['zone_name']}</b> ({alert['borough']}) is experiencing 
+                    <b>LIVE PRICING ALERT:</b> <b>{alert['zone_name']}</b> ({alert['borough']}) is experiencing 
                     <b>{alert['surge_multiplier']:.1f}x SURGE</b> with <b>{alert['trips_in_surge']}</b> active dispatches!
                 </div>
                 """,
@@ -433,7 +494,7 @@ def render_live_streaming_section(engine):
             """, unsafe_allow_html=True)
 
         if total_trips == 0:
-            st.info("💡 The live stream buffer is currently empty. Click **'▶ Start Stream'** or **'⚡ Burst (50 Rides)'** above, or run `python scripts/05_stream_producer.py` in your terminal to see real-time rides arrive!")
+            st.info("The live stream buffer is empty. Select **Start stream** or **Inject 50 rides**, or run `python scripts/05_stream_producer.py` in a terminal.")
             return
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -442,7 +503,7 @@ def render_live_streaming_section(engine):
         chart_col1, chart_col2 = st.columns([1, 1])
 
         with chart_col1:
-            st.markdown("#### ⚡ Real-Time Ride Arrival Velocity (Trips / Sec)")
+            st.markdown("#### Real-time ride arrival velocity")
             hist_df = get_live_throughput_history(engine, limit=20)
             if not hist_df.empty:
                 fig_stream = go.Figure()
@@ -465,12 +526,12 @@ def render_live_streaming_section(engine):
                     paper_bgcolor="rgba(0,0,0,0)",
                     plot_bgcolor="rgba(0,0,0,0)"
                 )
-                st.plotly_chart(fig_stream, use_container_width=True)
+                st.plotly_chart(fig_stream, width="stretch")
             else:
                 st.caption("Awaiting arrival time series...")
 
         with chart_col2:
-            st.markdown("#### 🏆 Active Streaming Hotspots & Surge Multiplier")
+            st.markdown("#### Active hotspots and pricing multiplier")
             hotspots_df = get_live_active_hotspots(engine, limit=8)
             if not hotspots_df.empty:
                 # Color map based on current surge
@@ -499,7 +560,7 @@ def render_live_streaming_section(engine):
                     paper_bgcolor="rgba(0,0,0,0)",
                     plot_bgcolor="rgba(0,0,0,0)"
                 )
-                st.plotly_chart(fig_hotspots, use_container_width=True)
+                st.plotly_chart(fig_hotspots, width="stretch")
             else:
                 st.caption("Awaiting zone activity...")
 
@@ -509,12 +570,12 @@ def render_live_streaming_section(engine):
         map_col, feed_col = st.columns([1, 1])
 
         with map_col:
-            st.markdown("#### 🗺️ Live NYC Geospatial Surge Map")
+            st.markdown("#### Live NYC pricing map")
             live_map = build_live_folium_map(hotspots_df)
-            folium_static(live_map, width=580, height=400)
+            st_folium(live_map, width=580, height=400, returned_objects=[])
 
         with feed_col:
-            st.markdown("#### 📡 Real-Time GPS Telemetry Dispatches Feed")
+            st.markdown("#### Recent dispatch feed")
             feed_df = get_live_recent_feed(engine, limit=12)
             if not feed_df.empty:
                 display_feed = feed_df.rename(columns={
@@ -529,7 +590,7 @@ def render_live_streaming_section(engine):
                 })
                 st.dataframe(
                     display_feed,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                     height=390
                 )
@@ -544,8 +605,8 @@ def main():
 
     # Sidebar Controls
     with st.sidebar:
-        st.title("🚕 NYC TLC Pipeline")
-        st.markdown("**Urban Mobility & Surge Pricing Analytics**")
+        st.title("NYC Mobility Intelligence")
+        st.markdown("**Demand, congestion and pricing analytics**")
         st.markdown("---")
 
         try:
@@ -562,20 +623,17 @@ def main():
             help="Select a specific NYC borough to filter downstream metrics and heatmap"
         )
 
-        st.markdown("---")
-        st.markdown("### ⚙️ Pipeline Specifications")
-        st.markdown("- **Processing Engine**: Apache Spark 3.5.1")
-        st.markdown("- **Storage Layer**: Local Data Lake Parquet")
-        st.markdown("- **Serving Database**: SQLite (WAL mode)")
-        st.markdown("- **Percentile Tiers**: 50th, 75th, 90th")
-
-        if st.button("🔄 Refresh Data Cache"):
+        if st.button("Refresh data cache", width="stretch"):
             st.cache_data.clear()
             st.rerun()
 
     # Header Title
-    st.markdown("## 🚕 NYC Urban Mobility & Dynamic Surge Pricing Dashboard")
-    st.caption(f"Currently displaying metrics for: **{selected_borough}**")
+    st.markdown(
+        '<div class="professional-header"><h1>NYC Mobility Intelligence</h1>'
+        '<p>Demand forecasting, congestion monitoring and explainable pricing decisions</p></div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(f"Analysis scope: **{selected_borough}**")
 
     # Fetch Top-level KPIs
     kpis = get_kpi_metrics(engine, borough=selected_borough)
@@ -584,18 +642,22 @@ def main():
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Main Tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📈 Demand & Congestion",
-        "📍 Pickup Hotspots & Map",
-        "⚡ Surge Pricing Simulator",
-        "📅 Macro Daily Trends",
-        "🔴 Real-Time Streaming"
+    tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "Executive Intelligence",
+        "Demand and Congestion",
+        "Pickup Hotspots",
+        "Explainable Pricing",
+        "Daily Trends",
+        "Live Operations"
     ])
+
+    with tab0:
+        render_executive_intelligence(engine, selected_borough)
 
 
     # TAB 1: DEMAND & CONGESTION
     with tab1:
-        st.markdown("### 🗓️ Weekly Demand Distribution (Hour of Day vs. Day of Week)")
+        st.markdown("### Weekly demand distribution")
         heatmap_df = get_hourly_heatmap_data(engine, borough=selected_borough)
 
         if not heatmap_df.empty:
@@ -614,11 +676,11 @@ def main():
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)"
             )
-            st.plotly_chart(fig_heatmap, use_container_width=True)
+            st.plotly_chart(fig_heatmap, width="stretch")
         else:
             st.info("No demand data available for the selected borough.")
 
-        st.markdown("### 🚗 Traffic Velocity & Congestion Profile")
+        st.markdown("### Traffic velocity and congestion profile")
         speed_df = get_hourly_speed_trend(engine, borough=selected_borough)
         if not speed_df.empty:
             fig_speed = go.Figure()
@@ -640,7 +702,7 @@ def main():
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)"
             )
-            st.plotly_chart(fig_speed, use_container_width=True)
+            st.plotly_chart(fig_speed, width="stretch")
 
     # TAB 2: PICKUP HOTSPOTS & GEOSPATIAL MAP
     with tab2:
@@ -649,7 +711,7 @@ def main():
         hotspots_df = get_top_hotspots(engine, borough=selected_borough, limit=15)
 
         with col_chart:
-            st.markdown("### 🏆 Top 15 Pickup Hotspots")
+            st.markdown("### Top 15 pickup hotspots")
             if not hotspots_df.empty:
                 fig_hotspots = px.bar(
                     hotspots_df.sort_values(by="total_trips", ascending=True),
@@ -667,24 +729,24 @@ def main():
                     paper_bgcolor="rgba(0,0,0,0)",
                     plot_bgcolor="rgba(0,0,0,0)"
                 )
-                st.plotly_chart(fig_hotspots, use_container_width=True)
+                st.plotly_chart(fig_hotspots, width="stretch")
             else:
                 st.info("No zone data found.")
 
         with col_map:
-            st.markdown("### 🗺️ NYC Geospatial Demand Map")
+            st.markdown("### NYC geospatial demand map")
             m = build_folium_map(hotspots_df)
-            folium_static(m, width=620, height=520)
+            st_folium(m, width=620, height=520, returned_objects=[])
 
     # TAB 3: SURGE PRICING SIMULATOR
     with tab3:
-        st.markdown("### ⚡ Dynamic Surge Pricing Simulation Workbench")
-        st.markdown("Inspect simulated price elasticity and dynamic multiplier tiers per zone, day, and hour.")
+        st.markdown("### Explainable pricing decision workbench")
+        st.markdown("Inspect the demand evidence, percentile thresholds and fare impact behind each recommendation.")
 
         col_sim_left, col_sim_right = st.columns([1, 2])
 
         with col_sim_left:
-            st.markdown("#### 🎛️ Simulation Controls")
+            st.markdown("#### Decision controls")
             
             # Select Zone
             default_zone = "JFK Airport" if "JFK Airport" in zone_map else list(zone_map.keys())[0]
@@ -729,11 +791,26 @@ def main():
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+
+                percentile = sim_record.get("demand_percentile", 0)
+                if multiplier >= 2.5:
+                    tier, rationale = "Critical demand", f"Demand meets or exceeds the zone's 90th-percentile threshold ({sim_record.get('p90', 0):,.0f} rides)."
+                elif multiplier >= 1.8:
+                    tier, rationale = "High demand", f"Demand meets or exceeds the zone's 75th-percentile threshold ({sim_record.get('p75', 0):,.0f} rides)."
+                elif multiplier >= 1.3:
+                    tier, rationale = "Elevated demand", f"Demand meets or exceeds the zone's median threshold ({sim_record.get('p50', 0):,.0f} rides)."
+                else:
+                    tier, rationale = "Normal demand", f"Demand is below the zone's median threshold ({sim_record.get('p50', 0):,.0f} rides)."
+                st.markdown("#### Decision explanation")
+                st.info(f"**{tier}.** {rationale} This observation ranks at the {percentile:.0f}th percentile for the selected zone.")
+                st.markdown(
+                    f"**Fare impact:** \\${base_fare:.2f} base fare + \\${sim_record.get('fare_uplift', 0):.2f} adjustment = **\\${sim_fare:.2f} recommended fare**."
+                )
             else:
                 st.warning(f"No trip data recorded for {sim_zone_name} on {DAYS_OF_WEEK[sim_day]} at {sim_hour:02d}:00.")
 
         with col_sim_right:
-            st.markdown("#### 📊 Surge Pricing Distribution & Tier Breakdown")
+            st.markdown("#### Pricing tier distribution")
             dist_df = get_surge_pricing_distribution(engine, borough=selected_borough)
             if not dist_df.empty:
                 dist_df["multiplier_label"] = dist_df["surge_multiplier"].apply(lambda x: f"{x:.1f}x Tier")
@@ -758,7 +835,7 @@ def main():
                     paper_bgcolor="rgba(0,0,0,0)",
                     plot_bgcolor="rgba(0,0,0,0)"
                 )
-                st.plotly_chart(fig_donut, use_container_width=True)
+                st.plotly_chart(fig_donut, width="stretch")
 
                 st.dataframe(
                     dist_df[["surge_multiplier", "window_count", "avg_base_fare", "avg_simulated_fare", "total_trips_impacted"]].rename(
@@ -770,13 +847,13 @@ def main():
                             "total_trips_impacted": "Impacted Rides"
                         }
                     ),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
 
     # TAB 4: DAILY TRENDS
     with tab4:
-        st.markdown("### 📅 Macro Time-Series: Daily Ride Volume & Revenue")
+        st.markdown("### Daily ride volume and revenue")
         daily_df = get_daily_trends_data(engine)
 
         if not daily_df.empty:
@@ -806,7 +883,7 @@ def main():
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)"
             )
-            st.plotly_chart(fig_daily, use_container_width=True)
+            st.plotly_chart(fig_daily, width="stretch")
         else:
             st.info("No daily trend data available.")
 

@@ -1,0 +1,12 @@
+{
+  "model": "HistGradientBoostingRegressor",
+  "training_rows": 29205,
+  "test_rows": 4135,
+  "holdout_start": "2026-08-01T23:00:00",
+  "mae_trips": 233.02,
+  "wape_percent": 14.99,
+  "seasonal_baseline_mae_trips": 287.43,
+  "seasonal_baseline_wape_percent": 18.49,
+  "beats_seasonal_baseline": true,
+  "trained_through": "2026-08-31T23:00:00"
+}

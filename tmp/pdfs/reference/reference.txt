@@ -1,0 +1,455 @@
+--- PAGE 1 ---
+U N I V E R S I T Y P R O J E C T D E F E N S E · B I G D A T A S Y S T E M S
+Railway Big Data Analytics
+A Reproducible Batch and Streaming Analytics Platform
+Team Member 1
+Roll No. XXXX
+Team Member 2
+Roll No. XXXX
+Team Member 3
+Roll No. XXXX
+Team Member 4
+Roll No. XXXX
+Department of Computer Science & Engineering - [Your Institution Name]
+
+
+--- PAGE 2 ---
+inventory_2
+Massive observational scale
+Railway delay datasets contain millions of observations across trains, stations, and time
+periods.
+dataset
+38.4M records · ~1 GB CSV
+Approximately 38.4 million historical delay records, around 1 GB in CSV form, requiring
+efficient data processing.
+alt_route
+Two processing paradigms
+Historical batch analytics and real-time train monitoring require different processing
+architectures - this project integrates both in one educational platform.
+history
+Historical Data
+memory
+Distributed Processing
+bolt
+Streaming Events
+RailIntel Analytics
+Platform
+Presentation label for the integrated platform - not
+a claim of an independently deployed commercial
+product
+M O T I V A T I O N
+check_circle
+Demonstrate Apache Spark, HDFS, Kafka & ML in a realistic railway use case
+check_circle
+Reproducible, containerized platform for academic demonstration & experimentation
+check_circle
+Connect historical delay analysis with simulated live train-position events
+02 / 12
+0 2 · P R O B L E M S T A T E M E N T & M O T I V A T I O N
+Why Railway Big Data Analytics?
+
+
+--- PAGE 3 ---
+01
+storage
+Distributed ETL
+Clean, validate, enrich, and store 38.4
+million delay records using Apache Spark
+and HDFS.
+02
+model_training
+Delay Prediction
+Train a Spark MLlib regression model and
+export its learned parameters into a
+lightweight JSON representation for Python
+inference.
+03
+bolt
+Streaming Analytics
+Simulate train positions using timetable
+data, process events through Kafka, and
+enrich them with ML-based delay
+predictions.
+04
+map
+Interactive Visualization
+Leaflet.js dashboard for train tracking,
+station arrivals, and historical analytics.
+BATCH PIPELINE
+Spark ETL
+→
+HDFS Silver / Gold
+→
+MLlib Training
+→
+PostgreSQL Publication
+STREAMING PIPELINE
+Timetable Simulator
+→
+Kafka
+→
+Prediction Consumer
+→
+PostgreSQL
+→
+FastAPI
+→
+Leaflet Dashboard
+Containerized deployment using Docker Compose · All train positions are simulated from timetable data - no official live railway GPS feed is used.
+03 / 12
+0 3 · O B J E C T I V E S & P R O P O S E D S O L U T I O N
+Project Objectives and Solution
+
+
+--- PAGE 4 ---
+DOCKER COMPOSE - 10 LOGICAL SERVICES
+BATCH - HISTORICAL ANALYTICS
+Historical CSV Data
+→
+Apache Spark ETL
+→
+HDFS Parquet
+Storage
+→
+Silver / Gold Layers
+→
+Spark MLlib Model
+Training
+→
+Gold Analytics
+Exported JSON model - offline training, lightweight online inference
+STREAMING - LIVE SIMULATION
+Timetable Simulator
+→
+Apache Kafka ·
+KRaft Mode
+→
+Stream Consumer + ML
+Predictor
+→
+FastAPI REST API
+→
+Leaflet.js Dashboard
+database
+PostgreSQL
+streaming state - train_events
+· train_positions
+published Gold analytics
+data movement
+model export
+batch pipeline
+streaming pipeline
+Batch and streaming paths stay distinct - historical CSV is never streamed into Kafka.
+Deployment services (10)
+kafka-broker
+spark-master
+spark-worker
+hdfs-namenode
+hdfs-datanode
+postgresql
+fastapi-web
+kafka-simulator
+stream-consumer
+spark-jobs
+04 / 12
+0 4 · S Y S T E M A R C H I T E C T U R E
+System Architecture: Batch Meets Streaming
+
+
+--- PAGE 5 ---
+0 5 · D A T A S E T & P R E P R O C E S S I N G
+Dataset Overview and Cleaning Pipeline
+D A T A S E T
+P U R P O S E
+combined_delay.csv
+38.4 million historical delay observations (~1 GB CSV)
+combined_schedule.csv
+Station stop sequences and distances
+train_details.csv
+Train names, numbers, and types
+stations.json
+Station names, coordinates, and railway zones
+station_full_names.csv
+Station-code-to-name mapping and zone enrichment
+rule
+Early arrivals are retained down to -120 minutes; delays above 24 hours (1,440 minutes) are
+excluded.
+01
+Validation
+filter null or malformed keys and non-numeric train numbers
+↓
+02
+Outlier handling
+restrict delay values to the range -120 to 1,440 minutes
+↓
+03
+Schedule enrichment
+join stop-sequence and distance-from-origin information
+↓
+04
+Feature engineering
+extract month, ISO day of week, and train type
+↓
+05
+Missing-value handling
+missing distances →0.0 km · unknown train types →UNKNOWN
+05 / 12
+
+
+--- PAGE 6 ---
+0 6 · D I S T R I B U T E D P R O C E S S I N G & S T O R A G E
+Distributed Processing and Lakehouse Storage
+Apache Spark 3.5
+48 shuffle partitions
+Hadoop HDFS - 1 NameNode + 1 DataNode
+Snappy-compressed Parquet
+0.5% stratified Silver sample
+Raw CSV - 38.4M rows
+→
+Spark ETL - clean · validate · enrich
+layers
+S I L V E R
+Cleaned and validated delay observations
+Parquet partitioned by year and month
+Detailed analytical queries · training-sample extraction
+workspace_premium
+G O L D
+Pre-aggregated station-level & train-level analytics
+Average delay · 90th-percentile delay (P90)
+Fraction of delayed trains
+FROM SILVER
+Stratified 0.5% training sample
+→
+Spark MLlib
+FROM GOLD
+Aggregated analytics
+→
+PostgreSQL publication
+Single-NameNode / single-DataNode HDFS for local development and education - not a production high-availability cluster.
+06 / 12
+
+
+--- PAGE 7 ---
+0 7 · M A C H I N E L E A R N I N G
+Spark MLlib Delay Prediction
+Algorithm - Regularized Linear Regression
+regParam = 0.05
+maxIter = 50
+N U M E R I C
+station_no
+distance_from_origin_km
+month
+day_of_week
+C A T E G O R I C A L
+train_no
+station_code
+train_type
+upload_file
+Learned model parameters exported to JSON - lightweight Python inference in the streaming
+consumer, no Spark runtime per prediction.
+80/20 time-ordered split at cutoff 2025-11-26 - not a random split.
+M A E
+32.08 min
+mean absolute prediction error - average
+error magnitude in minutes
+R M S E
+65.65 min
+root mean squared error - penalizes larger
+errors more strongly
+TRAINING ROWS
+146,006
+TEST ROWS
+37,157
+TOTAL SAMPLE
+183,163
+SPLIT CUTOFF
+2025-11-26
+Results reflect this dataset and evaluation procedure - not guaranteed real-world operational accuracy.
+Categorical features
+→
+StringIndexer
+→
+OneHotEncoder
+Numeric features + encoded categoricals
+↓
+↓
+VectorAssembler
+→
+LinearRegression
+→
+Predicted delay
+07 / 12
+
+
+--- PAGE 8 ---
+0 8 · R E A L - T I M E S T R E A M I N G
+Kafka-Powered Streaming and Online Inference
+Timetable Simulator
+→
+hub Apache Kafka - topic train_positions · 6 partitions
+→
+Stream Consumer + ML Predictor
+→
+PostgreSQL
+KRaft mode - no ZooKeeper
+topic: train_positions
+6 partitions
+keyed by train number - per-train partition ordering
+consumer group: railway-prediction-service
+manual offset commit after DB persistence → at-least-once
+speed SIMULATOR MECHANICS
+Selects up to 200 trains whose timetables place them in service at current India-local time
+Emits an event every 2 seconds - 0.5 events per second per active train
+Simulates smooth acceleration and deceleration between target speeds
+Stops at scheduled stations
+Synthetic speed caps: 140 km/h premium trains · 100 km/h Express & Standard
+settings_suggest CONSUMER RESPONSIBILITIES
+Validates incoming events
+ML-based delay inference with 15-minute baseline fallback
+Computes estimated arrival times
+Batch-inserts event history into train_events
+Upserts latest state into train_positions
+Assigns synthetic 0-15 min on-time delay to every fifth numeric train number for dashboard
+variety
+I L L U S T R A T I V E E V E N T P A Y L O A D - N O T A C A P T U R E D E V E N T
+train_no
+lat
+lon
+speed_kmph
+event_ts
+predicted_delay_min
+warning
+Train positions and speeds are simulated from timetable data - not live GPS
+observations from Indian Railways.
+08 / 12
+
+
+--- PAGE 9 ---
+0 9 · B A C K E N D · D A T A B A S E · D A S H B O A R D
+Full-Stack Analytics and Visualization
+database PostgreSQL 16
+SCHEMA
+CATALOG
+stations · trains · route_stops
+STREAMING
+train_events full incoming event history
+train_positions latest position per train
+ANALYTICS (GOLD)
+station_delay_analytics · train_delay_analytics
+Catalog = railway network reference · events = stream history · positions = live state · analytics =
+historical Gold-layer summaries.
+api FastAPI REST API
+ENDPOINT GROUPS
+health
+system statistics
+train search
+station lookup
+journey planning
+station arrivals
+train route details
+analytics
+schedule 15-second staleness filter excludes outdated positions from live queries.
+DESIGN ILLUSTRATIONS - NOT APPLICATION SCREENSHOTS
+01 Trains Between Stations
+Origin-destination search with timetable-based
+departures & arrivals
+02 Live Station Arrivals
+Predicted arrivals over the next four hours at a selected
+station
+03 Live Train Status
+Interactive India map · color-coded delay markers · route
+polylines · stop-by-stop timeline · itinerary panel
+04 Big Data Analytics
+Historical zone-wise & train-type charts + live delay,
+speed & throughput trends in 15-minute buckets
+swap_horiz
+Dark theme · position refresh ≈ every 2 s · analytics refresh ≈ every 30 s · client-side SVG charts - no external charting library.
+09 / 12
+
+
+--- PAGE 10 ---
+1 0 · R E S U L T S & C A P A B I L I T I E S
+Platform Results and Analytics Capabilities
+38.4M
+HISTORICAL RECORDS PROCESSED BY THE
+CONFIGURED SPARK ETL
+183,163
+SAMPLED ROWS USED FOR ML TRAINING
+32.08 min
+MAE
+65.65 min
+RMSE
+fact_check I M P L E M E N T E D CA PA B I L I T I E S
+check_circle Spark ETL pipeline configured to process 38.4 million historical delay records
+check_circle Spark MLlib model trained on 183,163 sampled rows - MAE 32.08 · RMSE 65.65 min
+check_circle Gold-layer station & train summaries published to PostgreSQL
+check_circle Streaming architecture designed for up to 200 active simulated trains
+check_circle Theoretical event generation ≈ 100 events/s (200 trains × 0.5 events/s) - calculated
+capacity, not a measured benchmark
+THEORETICAL
+DASHBOARD KPI
+DATA SOURCE
+Active train count
+Live Kafka stream
+Average predicted delay
+Real-time fleet aggregation
+On-time vs delayed ratio
+15-minute threshold classification
+ML vs baseline prediction ratio
+Prediction-source tracking
+Zone-wise delay ranking
+Spark Gold layer
+Train-type delay comparison
+Spark Gold layer
+Delay, speed & throughput trends
+15-minute Kafka time buckets
+Historical analytics - Spark Gold  → PostgreSQL
+K E P T S E P A R A T E
+Live stream metrics - Kafka  → 15-min buckets
+Historical distributed analytics and simulated real-time event processing integrate in one reproducible architecture - historical and live metrics
+remain separate to preserve data provenance.
+10 / 12
+
+
+--- PAGE 11 ---
+1 1 · C O N C L U S I O N · L I M I T A T I O N S · F U T U R E S C O P E
+Summary and Road Ahead
+verified
+AC H I E V E M E N T S
+check_circle Integrated Apache Spark, HDFS, Kafka, PostgreSQL &
+FastAPI into an end-to-end analytics platform
+check_circle ML-based delay prediction with JSON model export for
+lightweight online inference
+check_circle Four-page Leaflet.js dashboard with map-based train
+tracking
+check_circle Docker Compose deployment for the 10 logical services
+report_problem
+L I M I TAT I O N S
+error_outline Train positions and speeds are simulated - not sourced
+from official live GPS feeds
+error_outline Single-NameNode / single-DataNode HDFS intended for
+local development and education
+error_outline Linear regression evaluation produced an MAE of 32.08
+minutes
+error_outline Missing weekday-of-operation information - trains
+assumed to operate daily
+rocket_launch
+F U T U R E S C O P E
+arrow_forward Integrate authorized live railway tracking APIs or feeds
+arrow_forward Evaluate Gradient-Boosted Trees or deep learning models
+arrow_forward Deploy multi-node HDFS with NameNode high availability
+arrow_forward Add real-time alerts, anomaly detection, and passenger-
+load analytics
+info
+All future-scope items are proposals - not implemented
+features.
+A reproducible foundation for studying the integration of distributed historical processing, machine learning, event
+streaming, and interactive railway analytics.
+11 / 12
+
+
+--- PAGE 12 ---
+THANK YOU!
+Questions & Answers
+R A I L W A Y B I G D A T A A N A L Y T I C S
+A R E P R O D U C I B L E B A T C H A N D S T R E A M I N G A N A L Y T I C S P L A T F O R M

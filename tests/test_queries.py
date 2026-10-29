@@ -16,7 +16,9 @@ from src.queries import (
     get_daily_trends_data,
     get_surge_pricing_distribution,
     get_distinct_filter_options,
-    simulate_zone_surge
+    simulate_zone_surge,
+    get_demand_forecast,
+    get_demand_spike_alerts,
 )
 
 
@@ -51,6 +53,7 @@ def populated_test_db(tmp_path):
             INSERT INTO zone_hourly_heatmap (PULocationID, zone_name, borough, day_of_week, pickup_hour, trip_count, avg_fare, avg_speed_mph)
             VALUES 
                 (132, 'JFK Airport', 'Queens', 0, 18, 500, 60.0, 15.0),
+                (132, 'JFK Airport', 'Queens', 0, 3, 50, 60.0, 20.0),
                 (237, 'Upper East Side South', 'Manhattan', 0, 18, 400, 15.0, 8.0)
         """))
 
@@ -108,6 +111,8 @@ def test_simulate_zone_surge(populated_test_db):
     assert result is not None
     assert result["surge_multiplier"] == 2.5
     assert result["simulated_fare"] == 150.0
+    assert result["demand_percentile"] == 100.0
+    assert result["fare_uplift"] == 90.0
 
     # Non-existent window
     empty = simulate_zone_surge(populated_test_db, pulocation_id=999, day_of_week=0, pickup_hour=0)
@@ -139,4 +144,27 @@ def test_get_hourly_heatmap_data(populated_test_db):
     assert heatmap_queens.shape == (7, 24)
     assert heatmap_queens.loc["Monday", 18] == 500
     assert heatmap_queens.loc["Monday", 0] == 0
+
+
+def test_demand_forecast(populated_test_db):
+    """Forecast returns a bounded six-hour seasonal outlook."""
+    from datetime import datetime
+    forecast = get_demand_forecast(
+        populated_test_db,
+        horizon=6,
+        reference_time=datetime(2023, 1, 2, 7, 30),
+        use_ml=False,
+    )
+    assert len(forecast) == 6
+    assert forecast.iloc[0]["predicted_trips"] == 1200
+    assert (forecast["lower_bound"] <= forecast["predicted_trips"]).all()
+    assert (forecast["upper_bound"] >= forecast["predicted_trips"]).all()
+
+
+def test_demand_spike_alerts(populated_test_db):
+    """Spike detection compares observations with their zone baseline."""
+    alerts = get_demand_spike_alerts(populated_test_db, limit=5)
+    assert not alerts.empty
+    assert alerts.iloc[0]["increase_pct"] >= 35
+    assert alerts.iloc[0]["severity"] in {"Elevated", "Critical"}
 

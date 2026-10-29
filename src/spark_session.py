@@ -8,6 +8,7 @@ Handles Windows worker configuration, driver memory, and shuffle settings.
 import os
 import sys
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Generator, Optional
 from pyspark.sql import SparkSession
 
@@ -20,6 +21,15 @@ def configure_pyspark_environment():
     active_python = sys.executable
     os.environ["PYSPARK_PYTHON"] = active_python
     os.environ["PYSPARK_DRIVER_PYTHON"] = active_python
+
+    # Prefer a project-local Java runtime so Spark works without a system install.
+    if not os.environ.get("JAVA_HOME"):
+        runtime_java = Path(__file__).resolve().parent.parent / ".runtime" / "java"
+        java_candidates = sorted(runtime_java.glob("*/bin/java.exe"))
+        if java_candidates:
+            java_home = java_candidates[0].parent.parent
+            os.environ["JAVA_HOME"] = str(java_home)
+            os.environ["PATH"] = f"{java_home / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}"
     
     # Configure HADOOP_HOME if winutils is present
     if "HADOOP_HOME" not in os.environ:
