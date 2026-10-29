@@ -12,8 +12,8 @@ graph LR
     B --> C["Pricing Engine\nPercentile Demand Model"]
     C --> D["SQLite / PostgreSQL\nServing Layer"]
     D --> E["Streamlit\nIntelligence Dashboard"]
-    F["Live Stream Producer"] -->|Real-Time Telemetry| D
-    D -->|@st.fragment Auto-Refresh| E
+    F["Live Stream Producer"] -->|"Real-Time Telemetry"| D
+    D -->|"Auto-Refresh Fragment"| E
 ```
 
 ---
